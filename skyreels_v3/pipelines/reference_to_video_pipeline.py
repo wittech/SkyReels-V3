@@ -419,6 +419,7 @@ class WanSkyReelsA2WanT2VPipeline(DiffusionPipeline, WanLoraLoaderMixin):
         max_sequence_length: int = 512,
         start_step=0,
         offload=False,
+        block_offload=False,
     ):
         r"""
         The call function for video generation.
@@ -504,7 +505,8 @@ class WanSkyReelsA2WanT2VPipeline(DiffusionPipeline, WanLoraLoaderMixin):
             self.text_encoder.to("cpu")
             gc.collect()
             torch.cuda.empty_cache()
-            self.transformer.to(self._execution_device)
+            if not block_offload:
+                self.transformer.to(self._execution_device)
 
         transformer_dtype = self.transformer.dtype
         prompt_embeds = prompt_embeds.to(transformer_dtype)
@@ -552,6 +554,7 @@ class WanSkyReelsA2WanT2VPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                     encoder_hidden_states=prompt_embeds,
                     attention_kwargs=attention_kwargs,
                     return_dict=False,
+                    block_offload=block_offload,
                 )[0]
                 noise_pred = noise_pred[:, :, : latents.shape[2], :, :]
 
@@ -565,6 +568,7 @@ class WanSkyReelsA2WanT2VPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                         encoder_hidden_states=negative_prompt_embeds,
                         attention_kwargs=attention_kwargs,
                         return_dict=False,
+                        block_offload=block_offload,
                     )[0]
                     noise_uncond_txt = noise_uncond_txt[:, :, : latents.shape[2], :, :]
 
@@ -577,6 +581,7 @@ class WanSkyReelsA2WanT2VPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                         encoder_hidden_states=negative_prompt_embeds,
                         attention_kwargs=attention_kwargs,
                         return_dict=False,
+                        block_offload=block_offload,
                     )[0]
                     noise_uncond_txt_img = noise_uncond_txt_img[
                         :, :, : latents.shape[2], :, :
@@ -613,6 +618,10 @@ class WanSkyReelsA2WanT2VPipeline(DiffusionPipeline, WanLoraLoaderMixin):
 
                 if XLA_AVAILABLE:
                     xm.mark_step()
+                
+                if block_offload:
+                    gc.collect()
+                    torch.cuda.empty_cache()
 
         self._current_timestep = None
         if offload:
@@ -692,6 +701,7 @@ class ReferenceToVideoPipeline:
         weight_dtype=torch.bfloat16,
         use_usp=False,
         offload=False,
+        low_vram=False,
     ):
         """
         Initialize the reference to video pipeline class
@@ -702,7 +712,9 @@ class ReferenceToVideoPipeline:
             weight_dtype: Weight data type, defaults to torch.bfloat16
             use_usp: Whether to use USP, defaults to False
             offload: Whether to offload the model to CPU, defaults to False
+            low_vram: Whether to use low VRAM mode, defaults to False
         """
+        offload = offload or low_vram
         load_device = "cpu" if offload else device
         self.transformer = SkyReelsA2WanI2v3DModel.from_pretrained(
             model_path, subfolder="transformer", torch_dtype=torch.bfloat16
@@ -727,7 +739,15 @@ class ReferenceToVideoPipeline:
 
         self.use_usp = use_usp
         self.offload = offload
+        self.low_vram = low_vram
         self.device = device
+        if low_vram:
+            from torchao.quantization import float8_weight_only
+            from torchao.quantization import quantize_
+            quantize_(self.pipeline.transformer, float8_weight_only(), device="cuda")
+
+            ## vae enable tiling
+            self.pipeline.vae.enable_tiling()
 
         if self.use_usp:
             from ..distributed.context_parallel_for_reference import (
@@ -766,6 +786,7 @@ class ReferenceToVideoPipeline:
             "start_step": 0,
             "num_inference_steps": 8,
             "offload": self.offload,
+            "block_offload": self.low_vram,
         }
         logging.info(f"kwargs: {kwargs}")
         video_pt = self.pipeline(**kwargs).frames

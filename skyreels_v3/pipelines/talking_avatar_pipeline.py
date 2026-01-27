@@ -16,6 +16,7 @@ import torch.nn.functional as F
 import torchvision.transforms as transforms
 from PIL import Image
 from safetensors.torch import load_file
+from torchao.quantization import float8_weight_only, quantize_
 from tqdm import tqdm
 
 from ..modules.clip import CLIPModel
@@ -88,6 +89,7 @@ class TalkingAvatarPipeline:
     def init_dit_model(
         cls,
         checkpoint_dir: str,
+        quant: bool = False,
     ) -> Dict[str, WanModel]:
         print(f"load dit model from: {checkpoint_dir}")
         state_dict = {}
@@ -104,6 +106,10 @@ class TalkingAvatarPipeline:
 
         model.eval().requires_grad_(False)
         model = model.to(torch.bfloat16)
+        if quant:
+            quantize_(model, float8_weight_only(), device="cuda")
+            print(f"quantize dit model")
+
         return {"model": model}
 
     def __init__(
@@ -116,7 +122,11 @@ class TalkingAvatarPipeline:
         num_timesteps=1000,
         use_timestep_transform=True,
         offload=False,
+        low_vram=False,
     ):
+        offload = offload or low_vram
+        quant = low_vram
+
         self.device = torch.device(f"cuda:{device_id}")
         self.config = config
         self.rank = rank
@@ -153,6 +163,7 @@ class TalkingAvatarPipeline:
         logging.info(f"Creating WanModel from {model_path}")
         self.model = self.init_dit_model(
             checkpoint_dir=model_path,
+            quant=quant,
         )["model"]
 
         if use_usp:
@@ -187,6 +198,7 @@ class TalkingAvatarPipeline:
         self.use_timestep_transform = use_timestep_transform
 
         self.offload = offload
+        self.low_vram = low_vram
         if self.offload:
             self.model.to("cpu")
             self.text_encoder.to("cpu")
@@ -217,7 +229,7 @@ class TalkingAvatarPipeline:
     def generate(
         self,
         input_data,
-        size_buckget="talking-avatar-480",
+        size_buckget="720P",
         motion_frame=25,
         drop_frame=12,
         frame_num=81,
@@ -236,9 +248,9 @@ class TalkingAvatarPipeline:
         cond_image = Image.open(cond_file_path).convert("RGB")
 
         # decide a proper size
-        if size_buckget == "talking-avatar-480":
+        if size_buckget == "480P":
             bucket_config = ASPECT_RATIO_627
-        elif size_buckget == "talking-avatar-720":
+        elif size_buckget == "720P":
             bucket_config = ASPECT_RATIO_960
         else:
             raise ValueError("Unsupported size bucket: {}".format(size_buckget))
@@ -438,6 +450,7 @@ class TalkingAvatarPipeline:
                 "y": y,
                 "audio": audio_embs,
                 "ref_target_masks": ref_target_masks,
+                "block_offload": self.low_vram,
             }
 
             arg_null_text = {
@@ -447,6 +460,7 @@ class TalkingAvatarPipeline:
                 "y": y,
                 "audio": audio_embs,
                 "ref_target_masks": ref_target_masks,
+                "block_offload": self.low_vram,
             }
 
             arg_null_audio = {
@@ -456,6 +470,7 @@ class TalkingAvatarPipeline:
                 "y": y,
                 "audio": torch.zeros_like(audio_embs)[-1:],
                 "ref_target_masks": ref_target_masks,
+                "block_offload": self.low_vram,
             }
 
             arg_null = {
@@ -465,9 +480,10 @@ class TalkingAvatarPipeline:
                 "y": y,
                 "audio": torch.zeros_like(audio_embs)[-1:],
                 "ref_target_masks": ref_target_masks,
+                "block_offload": self.low_vram,
             }
 
-            if self.offload:
+            if self.offload and not self.low_vram:
                 self.model.to(self.device)
 
             progress_wrap = partial(tqdm, total=len(timesteps) - 1) if progress else (lambda x: x)
@@ -533,7 +549,7 @@ class TalkingAvatarPipeline:
                 x0 = [latent.to(self.device)]
                 del latent_model_input, timestep
 
-            if self.offload:
+            if self.offload and not self.low_vram:
                 self.model.to("cpu")
                 torch.cuda.empty_cache()
 
@@ -721,6 +737,7 @@ class TalkingAvatarPipeline:
                         "y": y,
                         "audio": audio_embs,
                         "ref_target_masks": ref_target_masks,
+                        "block_offload": self.low_vram,
                     }
 
                     arg_null_text = {
@@ -730,6 +747,7 @@ class TalkingAvatarPipeline:
                         "y": y,
                         "audio": audio_embs,
                         "ref_target_masks": ref_target_masks,
+                        "block_offload": self.low_vram,
                     }
 
                     arg_null_audio = {
@@ -739,6 +757,7 @@ class TalkingAvatarPipeline:
                         "y": y,
                         "audio": torch.zeros_like(audio_embs)[-1:],
                         "ref_target_masks": ref_target_masks,
+                        "block_offload": self.low_vram,
                     }
 
                     arg_null = {
@@ -748,9 +767,10 @@ class TalkingAvatarPipeline:
                         "y": y,
                         "audio": torch.zeros_like(audio_embs)[-1:],
                         "ref_target_masks": ref_target_masks,
+                        "block_offload": self.low_vram,
                     }
 
-                    if self.offload:
+                    if self.offload and not self.low_vram:
                         self.model.to(self.device)
 
                     # injecting motion frames
@@ -844,7 +864,7 @@ class TalkingAvatarPipeline:
                         x0 = [latent.to(self.device)]
                         del latent_model_input, timestep
 
-                    if self.offload:
+                    if self.offload and not self.low_vram:
                         self.model.to("cpu")
                         torch.cuda.empty_cache()
 

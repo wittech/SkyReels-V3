@@ -787,8 +787,34 @@ class WanModel(ModelMixin, ConfigMixin):
         audio=None,
         ref_target_masks=None,
         audio_mask=None,
+        block_offload: bool = False,
     ):
         assert clip_fea is not None and y is not None
+
+        # Move pre-block modules to GPU for block offload mode
+        if block_offload:
+            self.patch_embedding.to("cuda")
+            self.text_embedding.to("cuda")
+            self.time_embedding.to("cuda")
+            self.time_projection.to("cuda")
+            self.img_emb.to("cuda")
+            self.audio_proj.to("cuda")
+            self.freqs = self.freqs.to("cuda")
+
+            # Move inputs to GPU
+            x = [u.to("cuda") for u in x]
+            t = t.to("cuda")
+            context = [c.to("cuda") for c in context]
+            if clip_fea is not None:
+                clip_fea = clip_fea.to("cuda")
+            if y is not None:
+                y = [v.to("cuda") for v in y]
+            if audio is not None:
+                audio = audio.to("cuda")
+            if ref_target_masks is not None:
+                ref_target_masks = ref_target_masks.to("cuda")
+            if audio_mask is not None:
+                audio_mask = audio_mask.to("cuda")
 
         _, T, H, W = x[0].shape
         N_t = T // self.patch_size[0]
@@ -842,6 +868,16 @@ class WanModel(ModelMixin, ConfigMixin):
         human_num = len(audio_embedding)
         audio_embedding = torch.concat(audio_embedding.split(1), dim=2).to(x.dtype)
 
+        # Offload pre-block modules back to CPU after embeddings computation
+        if block_offload:
+            self.patch_embedding.to("cpu")
+            self.text_embedding.to("cpu")
+            self.time_embedding.to("cpu")
+            self.time_projection.to("cpu")
+            self.img_emb.to("cpu")
+            self.audio_proj.to("cpu")
+            torch.cuda.empty_cache()
+
         # convert ref_target_masks to token_ref_target_masks
         if ref_target_masks is not None:
             ref_target_masks = ref_target_masks.unsqueeze(0).to(torch.float32)
@@ -865,11 +901,24 @@ class WanModel(ModelMixin, ConfigMixin):
             audio_mask=audio_mask,
         )
 
-        for block in self.blocks:
-            x = block(x, **kwargs)
+        if block_offload:
+            for block in self.blocks:
+                block.to("cuda")
+                x = block(x, **kwargs)
+                block.to("cpu")
+                torch.cuda.empty_cache()
 
-        # head
-        x = self.head(x, e)
+            # head
+            self.head.to("cuda")
+            x = self.head(x, e)
+            self.head.to("cpu")
+            torch.cuda.empty_cache()
+        else:
+            for block in self.blocks:
+                x = block(x, **kwargs)
+
+            # head
+            x = self.head(x, e)
 
         # unpatchify
         x = self.unpatchify(x, grid_sizes)

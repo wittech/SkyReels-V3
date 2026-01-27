@@ -26,6 +26,7 @@ class ShotSwitchingExtensionPipeline:
         weight_dtype=torch.bfloat16,
         use_usp=False,
         offload=False,
+        low_vram=False,
     ):
         """
         Initialize the diffusion forcing pipeline class
@@ -35,12 +36,14 @@ class ShotSwitchingExtensionPipeline:
             device (str): Device to run on, defaults to 'cuda'
             weight_dtype: Weight data type, defaults to torch.bfloat16
         """
+        offload = offload or low_vram
         load_device = "cpu" if offload else device
         self.transformer = get_transformer(
             model_path,
             subfolder="shot_transformer",
             device=load_device,
             weight_dtype=weight_dtype,
+            low_vram=low_vram,
         )
         vae_model_path = os.path.join(model_path, "Wan2.1_VAE.pth")
         self.vae = get_vae(vae_model_path, device=device, weight_dtype=torch.float32)
@@ -50,6 +53,7 @@ class ShotSwitchingExtensionPipeline:
         self.video_processor = VideoProcessor(vae_scale_factor=16)
         self.device = device
         self.offload = offload
+        self.low_vram = low_vram
         self.sp_size = 1
 
         if use_usp:
@@ -105,7 +109,6 @@ class ShotSwitchingExtensionPipeline:
         prefix_video, raw_video, height, width = get_video_info(
             raw_video, num_condition_frames, resolution
         )
-
         prefix_video = prefix_video.to(self.device)
         prefix_video = self.vae.encode(prefix_video)
         video_frames = self.__call__(
@@ -119,6 +122,7 @@ class ShotSwitchingExtensionPipeline:
             shift=8.0,
             generator=torch.Generator(device=self.device).manual_seed(seed),
             prefix_video=prefix_video,
+            block_offload=self.low_vram,
         )[0]
         logging.info(f"video_frames: {video_frames.shape}")
         return video_frames
@@ -139,6 +143,7 @@ class ShotSwitchingExtensionPipeline:
         guidance_scale: float = 5.0,
         shift: float = 5.0,
         generator: Optional[torch.Generator] = None,
+        block_offload: bool = False,
         **kwargs,
     ):
         self._guidance_scale = guidance_scale
@@ -180,8 +185,10 @@ class ShotSwitchingExtensionPipeline:
         context_frames = prefix_video.shape[2]
         total_frames = latents[0].shape[1] + context_frames
 
-        if self.offload:
+        if self.offload and not block_offload:
             self.transformer.to(self.device)
+        else:
+            self.transformer.to("cpu")
         with torch.cuda.amp.autocast(dtype=self.transformer.dtype), torch.no_grad():
             self.scheduler.set_timesteps(
                 num_inference_steps, device=self.device, shift=shift
@@ -195,29 +202,36 @@ class ShotSwitchingExtensionPipeline:
                 timestep[:, -context_frames:] = 0
                 if guidance_scale > 1.0:
                     noise_pred_cond = self.transformer(
-                        [latent_model_input, prefix_video], t=timestep, context=context
+                        [latent_model_input, prefix_video], t=timestep, context=context, block_offload=block_offload
                     )[0]
                     noise_pred_uncond = self.transformer(
                         [latent_model_input, prefix_video],
                         t=timestep,
                         context=context_null,
+                        block_offload=block_offload,
                     )[0]
                     noise_pred = noise_pred_uncond + guidance_scale * (
                         noise_pred_cond - noise_pred_uncond
                     )
                 else:
                     noise_pred = self.transformer(
-                        [latent_model_input, prefix_video], t=timestep, context=context
-                    )[0]
+                        [latent_model_input, prefix_video], t=timestep, context=context, block_offload=block_offload
+                    )
+                    # Check if the output is a tuple or a tensor
+                    if isinstance(noise_pred, tuple):
+                        noise_pred = noise_pred[0]
 
                 temp_x0 = self.scheduler.step(
-                    noise_pred.unsqueeze(0),
+                    noise_pred,
                     t,
                     latents[0].unsqueeze(0),
                     return_dict=False,
                     generator=generator,
                 )[0]
                 latents = [temp_x0.squeeze(0)]
+                if block_offload:
+                    gc.collect()
+                    torch.cuda.empty_cache()
             if self.offload:
                 self.transformer.cpu()
                 torch.cuda.empty_cache()

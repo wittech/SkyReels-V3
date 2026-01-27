@@ -19,3 +19,4 @@ librosa
 moviepy==2.2.1
 omegaconf==2.3.0
 kornia
+torchao==0.10.0

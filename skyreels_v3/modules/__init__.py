@@ -30,7 +30,7 @@ def get_vae(model_path, subfolder="", device="cuda", weight_dtype=torch.float32)
 
 
 def get_transformer(
-    model_path, subfolder="", device="cuda", weight_dtype=torch.bfloat16
+    model_path, subfolder="", device="cuda", weight_dtype=torch.bfloat16, low_vram=False
 ) -> WanModel:
     model_path = os.path.join(model_path, subfolder) if subfolder else model_path
     config_path = os.path.join(model_path, "config.json")
@@ -48,6 +48,11 @@ def get_transformer(
 
     transformer.requires_grad_(False)
     transformer.eval()
+    if low_vram:
+        from torchao.quantization import float8_weight_only
+        from torchao.quantization import quantize_
+        quantize_(transformer, float8_weight_only(), device="cuda")
+        transformer.to(device)
     gc.collect()
     torch.cuda.empty_cache()
     return transformer

@@ -35,6 +35,7 @@ class SingleShotExtensionPipeline:
         weight_dtype=torch.bfloat16,
         use_usp=False,
         offload=False,
+        low_vram=False,
     ):
         """
         Initialize the diffusion forcing pipeline class
@@ -44,12 +45,14 @@ class SingleShotExtensionPipeline:
             device (str): Device to run on, defaults to 'cuda'
             weight_dtype: Weight data type, defaults to torch.bfloat16
         """
+        offload = offload or low_vram
         load_device = "cpu" if offload else device
         self.transformer = get_transformer(
             model_path,
             subfolder="transformer",
             device=load_device,
             weight_dtype=weight_dtype,
+            low_vram=low_vram,
         )
         vae_model_path = os.path.join(model_path, "Wan2.1_VAE.pth")
         self.vae = get_vae(vae_model_path, device=device, weight_dtype=torch.float32)
@@ -59,6 +62,7 @@ class SingleShotExtensionPipeline:
         self.video_processor = VideoProcessor(vae_scale_factor=16)
         self.device = device
         self.offload = offload
+        self.low_vram = low_vram
         self.sp_size = 1
         self.use_usp = use_usp
 
@@ -144,6 +148,7 @@ class SingleShotExtensionPipeline:
                 guidance_scale=1.0,
                 shift=8.0,
                 generator=torch.Generator(device=self.device).manual_seed(seed),
+                block_offload=self.low_vram,
                 **kwargs,
             )[0]
             # if i == 0:
@@ -172,6 +177,7 @@ class SingleShotExtensionPipeline:
         guidance_scale: float = 5.0,
         shift: float = 5.0,
         generator: Optional[torch.Generator] = None,
+        block_offload: bool = False,
         **kwargs,
     ):
         self._guidance_scale = guidance_scale
@@ -220,7 +226,7 @@ class SingleShotExtensionPipeline:
             )
         ]
 
-        if self.offload:
+        if self.offload and not block_offload:
             self.transformer.to(self.device)
 
         logging.info(f"start transformer forward, latents: {latents[0].shape}")
@@ -243,10 +249,10 @@ class SingleShotExtensionPipeline:
                     timestep[:, : kwargs["condition"].shape[2]] = 0
                 if self.do_classifier_free_guidance:
                     noise_pred_cond = self.transformer(
-                        latent_model_input, t=timestep, context=context
+                        latent_model_input, t=timestep, context=context, block_offload=block_offload
                     )[0]
                     noise_pred_uncond = self.transformer(
-                        latent_model_input, t=timestep, context=context_null
+                        latent_model_input, t=timestep, context=context_null, block_offload=block_offload
                     )[0]
 
                     noise_pred = noise_pred_uncond + guidance_scale * (
@@ -255,7 +261,7 @@ class SingleShotExtensionPipeline:
                 else:
                     # CFG distilled
                     noise_pred = self.transformer(
-                        latent_model_input, t=timestep, context=context
+                        latent_model_input, t=timestep, context=context, block_offload=block_offload
                     )[0]
                 if "condition" in kwargs:
                     noise_pred = noise_pred[:, -latents[0].shape[1] :]
@@ -268,6 +274,9 @@ class SingleShotExtensionPipeline:
                     generator=generator,
                 )[0]
                 latents = [temp_x0.squeeze(0)]
+                if block_offload:
+                    gc.collect()
+                    torch.cuda.empty_cache()
             logging.info(
                 f"finish transformer forward, latents: {latents[0].shape}, {latents[0].device}"
             )

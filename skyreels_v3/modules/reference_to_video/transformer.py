@@ -658,6 +658,7 @@ class SkyReelsA2WanI2v3DModel(
         encoder_hidden_states_image: Optional[torch.Tensor] = None,
         return_dict: bool = True,
         attention_kwargs: Optional[Dict[str, Any]] = None,
+        block_offload: bool = False,
     ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
         if attention_kwargs is not None:
             attention_kwargs = attention_kwargs.copy()
@@ -673,9 +674,19 @@ class SkyReelsA2WanI2v3DModel(
                 attention_kwargs is not None
                 and attention_kwargs.get("scale", None) is not None
             ):
-                logger.warning(
+                logging.warning(
                     "Passing `scale` via `attention_kwargs` when not using the PEFT backend is ineffective."
                 )
+
+        if block_offload:
+            self.rope.to("cuda")
+            self.patch_embedding.to("cuda")
+            self.condition_embedder.to("cuda")
+            hidden_states = hidden_states.to("cuda")
+            timestep = timestep.to("cuda")
+            encoder_hidden_states = encoder_hidden_states.to("cuda")
+            if encoder_hidden_states_image is not None:
+                encoder_hidden_states_image = encoder_hidden_states_image.to("cuda")
 
         batch_size, num_channels, num_frames, height, width = hidden_states.shape
         p_t, p_h, p_w = self.config.patch_size
@@ -704,8 +715,33 @@ class SkyReelsA2WanI2v3DModel(
                 [encoder_hidden_states_image, encoder_hidden_states], dim=1
             )
 
+        if block_offload:
+            self.rope.to("cpu")
+            self.patch_embedding.to("cpu")
+            self.condition_embedder.to("cpu")
+            torch.cuda.empty_cache()
+
         # 4. Transformer blocks
-        if torch.is_grad_enabled() and self.gradient_checkpointing:
+        if block_offload:
+            for i, block in enumerate(self.blocks):
+                block.to("cuda")
+
+                if torch.is_grad_enabled() and self.gradient_checkpointing:
+                    hidden_states = self._gradient_checkpointing_func(
+                        block,
+                        hidden_states,
+                        encoder_hidden_states,
+                        timestep_proj,
+                        rotary_emb,
+                    )
+                else:
+                    hidden_states = block(
+                        hidden_states, encoder_hidden_states, timestep_proj, rotary_emb
+                    )
+
+                block.to("cpu")
+                torch.cuda.empty_cache()
+        elif torch.is_grad_enabled() and self.gradient_checkpointing:
             for block in self.blocks:
                 hidden_states = self._gradient_checkpointing_func(
                     block,
@@ -721,11 +757,22 @@ class SkyReelsA2WanI2v3DModel(
                 )
 
         # 5. Output norm, projection & unpatchify
+        if block_offload:
+            self.norm_out.to("cuda")
+            self.proj_out.to("cuda")
+            self.scale_shift_table.data = self.scale_shift_table.data.to("cuda")
+
         shift, scale = (self.scale_shift_table + temb.unsqueeze(1)).chunk(2, dim=1)
         hidden_states = (
             self.norm_out(hidden_states.float()) * (1 + scale) + shift
         ).type_as(hidden_states)
         hidden_states = self.proj_out(hidden_states)
+
+        if block_offload:
+            self.norm_out.to("cpu")
+            self.proj_out.to("cpu")
+            self.scale_shift_table.data = self.scale_shift_table.data.to("cpu")
+            torch.cuda.empty_cache()
 
         hidden_states = hidden_states.reshape(
             batch_size,

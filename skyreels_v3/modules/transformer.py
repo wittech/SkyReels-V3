@@ -678,6 +678,7 @@ class WanModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         y=None,
         block_mask=None,
         context_window_size=0,
+        block_offload: bool = False,
     ):
         r"""
         Forward pass through the diffusion model
@@ -704,13 +705,45 @@ class WanModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         """
         if self.model_type == "i2v":
             assert clip_fea is not None and y is not None
+        
+        if block_offload:
+            self.patch_embedding.to("cuda")
+            self.text_embedding.to("cuda")
+            self.time_embedding.to("cuda")
+            self.time_projection.to("cuda")
+            if hasattr(self, "img_emb"):
+                self.img_emb.to("cuda")
+            self.freqs = self.freqs.to("cuda")
+
+            if isinstance(x, torch.Tensor):
+                x = x.to("cuda")
+            elif isinstance(x, list):
+                x = [item.to("cuda") for item in x]
+            
+            t = t.to("cuda")
+            context = context.to("cuda")
+            if clip_fea is not None:
+                clip_fea = clip_fea.to("cuda")
+            if y is not None:
+                y = y.to("cuda")
+            if block_mask is not None:
+                block_mask = block_mask.to("cuda")
+
         # params
         device = self.patch_embedding.weight.device
         if self.freqs.device != device:
             self.freqs = self.freqs.to(device)
+            
+        # Ensure freqs is always on the correct device if it wasn't moved in block_offload
+        if not block_offload and self.freqs.device != x.device and isinstance(x, torch.Tensor):
+             self.freqs = self.freqs.to(x.device)
+        elif not block_offload and isinstance(x, list) and len(x) > 0 and self.freqs.device != x[0].device:
+             self.freqs = self.freqs.to(x[0].device)
 
         if isinstance(x, torch.Tensor):
             if y is not None:
+                if y.device != x.device:
+                    y = y.to(x.device)
                 x = torch.cat([x, y], dim=1)
 
             # embeddings
@@ -759,6 +792,15 @@ class WanModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             context_clip = self.img_emb(clip_fea)  # bs x 257 x dim
             context = torch.concat([context_clip, context], dim=1)
 
+        if block_offload:
+            self.patch_embedding.to("cpu")
+            self.text_embedding.to("cpu")
+            self.time_embedding.to("cpu")
+            self.time_projection.to("cpu")
+            if hasattr(self, "img_emb"):
+                self.img_emb.to("cpu")
+            torch.cuda.empty_cache()
+
         # arguments
         kwargs = dict(
             e=e0,
@@ -771,10 +813,34 @@ class WanModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             context_window_size=context_window_size,
             block_mask=block_mask,
         )
-        for block in self.blocks:
-            x = block(x, **kwargs)
+
+        if block_offload:
+            for i, block in enumerate(self.blocks):
+                block.to("cuda")
+                
+                if torch.is_grad_enabled() and self.gradient_checkpointing:
+                    x = self._gradient_checkpointing_func(
+                        block,
+                        x,
+                        **kwargs,
+                    )
+                else:
+                    x = block(x, **kwargs)
+                
+                block.to("cpu")
+                torch.cuda.empty_cache()
+        else:
+            for block in self.blocks:
+                x = block(x, **kwargs)
+
+        if block_offload:
+            self.head.to("cuda")
 
         x = self.head(x, e)
+
+        if block_offload:
+            self.head.to("cpu")
+            torch.cuda.empty_cache()
 
         if len(num_token_list) > 0:
             num_context_token = sum(num_token_list)

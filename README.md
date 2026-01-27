@@ -52,109 +52,112 @@ The demos above showcase videos generated using our SkyReels-V3 unified multimod
 
 ## 🚀 Quickstart
 
-#### Installation
+### ⚙️ Installation
+
 ```shell
-# clone the repository.
+# Clone the repository
 git clone https://github.com/SkyworkAI/SkyReels-V3
 cd SkyReels-V3
-# Install dependencies. Test environment uses Python 3.12.3 & cuda 12.8.
+
+# Install dependencies (Recommended: Python 3.12+, CUDA 12.8+)
 pip install -r requirements.txt
 ```
 
-#### Model Download
-You can download our models from Hugging Face:
-<table>
-  <thead>
-    <tr>
-      <th>Type</th>
-      <th>Variant</th>
-      <th>Link</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>Reference to Video</td>
-      <td>14B-720P</td>
-      <td>🤗 <a href="https://huggingface.co/Skywork/SkyReels-V3-R2V-14B">Huggingface</a> 🤖 <a href="https://www.modelscope.cn/models/Skywork/SkyReels-V3-R2V-14B">ModelScope</a></td>
-    </tr>
-    <tr>
-      <td>Video Extension</td>
-      <td>14B-720P</td>
-      <td>🤗 <a href="https://huggingface.co/Skywork/SkyReels-V3-V2V-14B">Huggingface</a> 🤖 <a href="https://www.modelscope.cn/models/Skywork/SkyReels-V3-V2V-14B">ModelScope</a></td>
-    </tr>
-    <tr>
-      <td>Talking Avatar</td>
-      <td>19B-720P</td>
-      <td>🤗 <a href="https://huggingface.co/Skywork/SkyReels-V3-A2V-19B">Huggingface</a> 🤖 <a href="https://www.modelscope.cn/models/Skywork/SkyReels-V3-A2V-19B">ModelScope</a></td>
-    </tr>
-  </tbody>
-</table>
+### 📥 Model Download
 
-After downloading, set the model path in your generation commands:
+Models are available on Hugging Face and ModelScope:
 
-#### Reference to Video
+| Model Type | Variant | Links |
+| :--- | :--- | :--- |
+| **Reference to Video** | 14B-720P | [🤗 Hugging Face](https://huggingface.co/Skywork/SkyReels-V3-R2V-14B) / [🤖 ModelScope](https://www.modelscope.cn/models/Skywork/SkyReels-V3-R2V-14B) |
+| **Video Extension** | 14B-720P | [🤗 Hugging Face](https://huggingface.co/Skywork/SkyReels-V3-V2V-14B) / [🤖 ModelScope](https://www.modelscope.cn/models/Skywork/SkyReels-V3-V2V-14B) |
+| **Talking Avatar** | 19B-720P | [🤗 Hugging Face](https://huggingface.co/Skywork/SkyReels-V3-A2V-19B) / [🤖 ModelScope](https://www.modelscope.cn/models/Skywork/SkyReels-V3-A2V-19B) |
+
+> **Note:** By default, the script automatically downloads models from Hugging Face. To use a local path, specify it via the `--model_id` flag.
+
+---
+
+### 🎬 Inference Examples
+
+#### 1. Reference to Video
 Reference-to-Video is a model that synthesizes coherent video sequences from 1 to 4 reference images and a text prompt. It excels at maintaining strong identity fidelity and narrative consistency for characters, objects, and backgrounds.
-- Single-GPU inference
-```bash
-python3 generate_video.py --task_type reference_to_video --ref_imgs "https://skyreels-api.oss-accelerate.aliyuncs.com/examples/subject_reference/0_1.png,https://skyreels-api.oss-accelerate.aliyuncs.com/examples/subject_reference/0_2.png" --prompt "In a dimly lit, cluttered occult club room adorned with shelves full of books, skulls, and mysterious dolls, two young Asian girls are talking. One girl has vibrant teal pigtails with bangs, wearing a white collared polo shirt, while the other has a sleek black bob with bangs, also in a white polo shirt, conversing under the hum of fluorescent lights, a high-quality and detailed cinematic shot." --duration 5 --offload
-```
-- Multi-GPU inference using xDiT USP
-```bash
-torchrun --nproc_per_node=4 generate_video.py --task_type reference_to_video --ref_imgs "https://skyreels-api.oss-accelerate.aliyuncs.com/examples/subject_reference/0_1.png,https://skyreels-api.oss-accelerate.aliyuncs.com/examples/subject_reference/0_2.png" --prompt "In a dimly lit, cluttered occult club room adorned with shelves full of books, skulls, and mysterious dolls, two young Asian girls are talking. One girl has vibrant teal pigtails with bangs, wearing a white collared polo shirt, while the other has a sleek black bob with bangs, also in a white polo shirt, conversing under the hum of fluorescent lights, a high-quality and detailed cinematic shot." --duration 5 --offload --use_usp
-```
-> 💡Note: 
-> * The ***task_type*** parameter must be set to "reference_to_video".
-> * The ***ref_imgs*** parameter accepts 1 to 4 reference images. When providing multiple images, please separate their paths or URLs with commas.
+
+- **Single-GPU Inference:**
+  ```bash
+  python3 generate_video.py --task_type reference_to_video --ref_imgs "https://skyreels-api.oss-accelerate.aliyuncs.com/examples/subject_reference/0_1.png,https://skyreels-api.oss-accelerate.aliyuncs.com/examples/subject_reference/0_2.png" --prompt "In a dimly lit, cluttered occult club room adorned with shelves full of books, skulls, and mysterious dolls, two young Asian girls are talking. One girl has vibrant teal pigtails with bangs, wearing a white collared polo shirt, while the other has a sleek black bob with bangs, also in a white polo shirt, conversing under the hum of fluorescent lights, a high-quality and detailed cinematic shot." --duration 5 --offload
+  ```
+- **Multi-GPU Inference (xDiT USP):**
+  ```bash
+  torchrun --nproc_per_node=4 generate_video.py --task_type reference_to_video --ref_imgs "https://skyreels-api.oss-accelerate.aliyuncs.com/examples/subject_reference/0_1.png,https://skyreels-api.oss-accelerate.aliyuncs.com/examples/subject_reference/0_2.png" --prompt "In a dimly lit, cluttered occult club room adorned with shelves full of books, skulls, and mysterious dolls, two young Asian girls are talking. One girl has vibrant teal pigtails with bangs, wearing a white collared polo shirt, while the other has a sleek black bob with bangs, also in a white polo shirt, conversing under the hum of fluorescent lights, a high-quality and detailed cinematic shot." --duration 5 --offload --use_usp
+  ```
+
+> 💡 **Notes:**
+> * The `--task_type` parameter must be set to `reference_to_video`.
+> * The `--ref_imgs` parameter accepts 1 to 4 reference images. When providing multiple images, please separate their paths or URLs with commas.
 > * The recommended output specification for this model is a 5-second video at 720p and 24 fps.
 
-#### Video Extension
-Video Extension is a suite of models designed to extend existing videos while preserving motion continuity, scene coherence, and the visual identity of subjects. It includes two main models: Single-shot Video Extension and Shot Switching Video Extension.
+#### 2. Video Extension
+Extends existing videos while preserving motion continuity, scene coherence, and subject identity.
 
-- **Single-shot Video Extension** supports video extension from 5 seconds to 30 seconds.
+##### A. Single-shot Video Extension (5s to 30s)
+- **Single-GPU Inference:**
+  ```bash
+  python3 generate_video.py --task_type single_shot_extension --input_video https://skyreels-api.oss-accelerate.aliyuncs.com/examples/video_extension/test.mp4 --prompt "A man is making his way forward slowly, leaning on a white cane to prop himself up." --duration 5 --offload
+  ```
+- **Multi-GPU Inference (xDiT USP):**
+  ```bash
+  torchrun --nproc_per_node=4 generate_video.py --task_type single_shot_extension --input_video https://skyreels-api.oss-accelerate.aliyuncs.com/examples/video_extension/test.mp4 --prompt "A man is making his way forward slowly, leaning on a white cane to prop himself up." --duration 5 --offload --use_usp
+  ```
 
-- **Shot Switching Video Extension** is designed for video extension with specified shot transitions, supporting cinematography types such as "Cut-In", "Cut-Out", "Shot/Reverse Shot", "Multi-Angle", and "Cut Away", but is currently limited to 5-second extensions.
+> 💡 **Notes:**
+> * The `--task_type` parameter must be set to `single_shot_extension`.
+> * The `--input_video` parameter specifies the source video to be extended. Since the **single_shot_extension** model supports extensions of 5 to 30 seconds, the `--duration` parameter accepts an integer value within this range.
 
-##### Single-shot Video Extension
-- Single-GPU inference
-```bash
-python3 generate_video.py --task_type single_shot_extension --input_video https://skyreels-api.oss-accelerate.aliyuncs.com/examples/video_extension/test.mp4 --prompt "A man is making his way forward slowly, leaning on a white cane to prop himself up." --duration 5 --offload
-```
-- Multi-GPU inference using xDiT USP
-```bash
-torchrun --nproc_per_node=4 generate_video.py --task_type single_shot_extension --input_video https://skyreels-api.oss-accelerate.aliyuncs.com/examples/video_extension/test.mp4 --prompt "A man is making his way forward slowly, leaning on a white cane to prop himself up." --duration 5 --offload --use_usp
-```
-> 💡Note: 
-> * The ***task_type*** parameter must be set to "single_shot_extension".
-> * The **input_video** parameter specifies the source video to be extended. Since the **single_shot_extension** model supports extensions of 5 to 30 seconds, the **duration** parameter accepts an integer value within this range.
-##### Shot Switching Video Extension
-- Single-GPU inference
-```bash
-python3 generate_video.py --task_type shot_switching_extension --input_video https://skyreels-api.oss-accelerate.aliyuncs.com/examples/video_extension/test.mp4 --prompt "[ZOOM_IN_CUT] The scene cuts from a medium shot of a visually impaired man walking on a path in a park. The shot then cut in to a close-up of the man's face and upper torso. The visually impaired Black man is shown from the chest up, wearing dark sunglasses, a grey turtleneck scarf, and a light olive green jacket. His head is held straight, looking forward towards the camera, continuing his walk. The lighting is natural and bright. The background is a soft blur of green trees and foliage from the park." --offload
-```
-- Multi-GPU inference using xDiT USP
-```bash
-torchrun --nproc_per_node=4 generate_video.py --task_type shot_switching_extension --input_video https://skyreels-api.oss-accelerate.aliyuncs.com/examples/video_extension/test.mp4 --prompt "[ZOOM_IN_CUT] The scene cuts from a medium shot of a visually impaired man walking on a path in a park. The shot then cut in to a close-up of the man's face and upper torso. The visually impaired Black man is shown from the chest up, wearing dark sunglasses, a grey turtleneck scarf, and a light olive green jacket. His head is held straight, looking forward towards the camera, continuing his walk. The lighting is natural and bright. The background is a soft blur of green trees and foliage from the park." --offload --use_usp
+##### B. Shot Switching Video Extension (Cinematic Transitions)
+Supports transitions like "Cut-In", "Cut-Out", "Shot/Reverse Shot", etc. (Limited to 5s).
+- **Single-GPU Inference:**
+  ```bash
+  python3 generate_video.py --task_type shot_switching_extension --input_video https://skyreels-api.oss-accelerate.aliyuncs.com/examples/video_extension/test.mp4 --prompt "[ZOOM_IN_CUT] The scene cuts from a medium shot of a visually impaired man walking on a path in a park. The shot then cut in to a close-up of the man's face and upper torso. The visually impaired Black man is shown from the chest up, wearing dark sunglasses, a grey turtleneck scarf, and a light olive green jacket. His head is held straight, looking forward towards the camera, continuing his walk. The lighting is natural and bright. The background is a soft blur of green trees and foliage from the park." --offload
+  ```
+- **Multi-GPU Inference (xDiT USP):**
+  ```bash
+  torchrun --nproc_per_node=4 generate_video.py --task_type shot_switching_extension --input_video https://skyreels-api.oss-accelerate.aliyuncs.com/examples/video_extension/test.mp4 --prompt "[ZOOM_IN_CUT] The scene cuts from a medium shot of a visually impaired man walking on a path in a park. The shot then cut in to a close-up of the man's face and upper torso. The visually impaired Black man is shown from the chest up, wearing dark sunglasses, a grey turtleneck scarf, and a light olive green jacket. His head is held straight, looking forward towards the camera, continuing his walk. The lighting is natural and bright. The background is a soft blur of green trees and foliage from the park." --offload --use_usp
+  ```
 
-```
-> 💡Note: 
-> * The ***task_type*** parameter must be set to "shot_switching_extension".
-> * The **input_video** parameter specifies the source video to be extended, and the **duration** parameter is therefore limited to a maximum of 5 seconds.
+> 💡 **Notes:**
+> * The `--task_type` parameter must be set to `shot_switching_extension`.
+> * The `--input_video` parameter specifies the source video to be extended, and the `--duration` parameter is therefore limited to a maximum of 5 seconds.
 > * To effectively utilize the supported cinematography types ("Cut-In", "Cut-Out", "Shot/Reverse Shot", "Multi-Angle", "Cut Away"), you can use a Large Language Model (LLM) to craft and optimize your generation prompts, ensuring clear and precise creative direction.
 
-#### Talking Avatar
-The Talking Avatar model generates vibrant, lifelike talking avatars from a single portrait image and an audio clip, supporting videos of up to 200 seconds in length. It is capable of producing multi-avatar scenes, adapting to diverse artistic styles, and delivering performances with rich expressiveness and precise synchronization.
-- Single-GPU inference
+#### 3. Talking Avatar
+Generates lifelike talking avatars from a single portrait and an audio clip (up to 200s).
+
+- **Single-GPU Inference:**
+  ```bash
+  python3 generate_video.py --task_type talking_avatar --prompt "A woman is giving a speech. She is confident, poised, and joyful. Use a static shot." --seed 42 --offload --input_image "https://skyreels-api.oss-accelerate.aliyuncs.com/examples/talking_avatar_video/woman.JPEG" --input_audio "https://skyreels-api.oss-accelerate.aliyuncs.com/examples/talking_avatar_video/single_actor/woman_speech.mp3"
+  ```
+- **Multi-GPU Inference (xDiT USP):**
+  ```bash
+  torchrun --nproc_per_node=4 generate_video.py --task_type talking_avatar --prompt "A woman is giving a speech. She is confident, poised, and joyful. Use a static shot." --seed 42 --use_usp --offload --input_image "https://skyreels-api.oss-accelerate.aliyuncs.com/examples/talking_avatar_video/woman.JPEG" --input_audio "https://skyreels-api.oss-accelerate.aliyuncs.com/examples/talking_avatar_video/single_actor/woman_speech.mp3"
+  ```
+
+> 💡 **Notes:**
+> * The `--task_type` parameter must be set to `talking_avatar`.
+> * The `--input_image` parameter specifies the first-frame image for talking avatar generation (URL or local path). Supported formats: `jpg/jpeg`, `png`, `gif`, `bmp`.
+> * The `--input_audio` parameter specifies the driving audio (URL or local path). Currently supports one audio track. Supported formats: `mp3`, `wav`. Audio duration must be `<= 200 seconds`.
+
+---
+
+### 📉 Memory Optimization (Low VRAM)
+For GPUs with lower VRAM (e.g., under 24GB), use these options:
+- Add the `--low_vram` flag to enable FP8 weight-only quantization and block offload.
+- Lower the output `--resolution` (default is `720P`; try `540P` or `480P`).
+
+Example:
 ```bash
-python3 generate_video.py --task_type talking_avatar --prompt "A woman is giving a speech. She is confident, poised, and joyful. Use a static shot." --seed 42 --offload --input_image "https://skyreels-api.oss-accelerate.aliyuncs.com/examples/talking_avatar_video/woman.JPEG" --input_audio "https://skyreels-api.oss-accelerate.aliyuncs.com/examples/talking_avatar_video/single_actor/woman_speech.mp3"
+export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True" && python3 generate_video.py --low_vram --resolution 540P ...
 ```
-- Multi-GPU inference using xDiT USP
-```bash
-torchrun --nproc_per_node=4 generate_video.py --task_type talking_avatar --prompt "A woman is giving a speech. She is confident, poised, and joyful. Use a static shot." --seed 42 --use_usp --offload --input_image "https://skyreels-api.oss-accelerate.aliyuncs.com/examples/talking_avatar_video/woman.JPEG" --input_audio "https://skyreels-api.oss-accelerate.aliyuncs.com/examples/talking_avatar_video/single_actor/woman_speech.mp3"
-```
-> 💡Note: 
-> * The ***task_type*** parameter must be set to "talking_avatar".
-> * The **input_image** parameter specifies the first-frame image for talking avatar generation (URL or local path). Supported formats: **jpg/jpeg, png, gif, bmp**.
-> * The **input_audio** parameter specifies the driving audio (URL or local path). Currently supports **1 audio**. Supported formats: **mp3, wav**. Audio duration: **<= 200 seconds**.
+
 
 ## Introduction of SkyReels-V3
 

@@ -16,6 +16,7 @@ import subprocess
 
 import imageio
 import torch
+# torch.cuda.set_per_process_memory_fraction(0.75)
 import torch.distributed as dist
 import wget
 from diffusers.utils import load_image
@@ -121,47 +122,109 @@ MODEL_ID_CONFIG = {
 }
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="SkyReels V3: Multimodal Video Generation Model")
+
+    # ==================== Task Selection ====================
     parser.add_argument(
         "--task_type",
         type=str,
         choices=[
-            "single_shot_extension",
-            "shot_switching_extension",
-            "reference_to_video",
-            "talking_avatar",
+            "single_shot_extension",  # Single-shot video extension (5s to 30s)
+            "shot_switching_extension",  # Shot switching extension with cinematic transitions (Cut-In, Cut-Out, etc.), limited to 5s
+            "reference_to_video",  # Generate video from 1-4 reference images with text prompt
+            "talking_avatar",  # Generate talking avatar from portrait image and audio (up to 200s)
         ],
+        help="Type of video generation task to perform.",
     )
-    parser.add_argument("--model_id", type=str, default=None)
-    parser.add_argument("--duration", type=int, default=5)
+
+    # ==================== Model Configuration ====================
     parser.add_argument(
-        "--ref_imgs",
+        "--model_id",
         type=str,
-        default="https://skyreels-api.oss-accelerate.aliyuncs.com/examples/subject_reference/0_0.png",
+        default=None,
+        help="Model path or HuggingFace model ID. If not specified, will auto-select based on task_type. "
+        "Supports: Skywork/SkyReels-V3-Reference2Video, Skywork/SkyReels-V3-Video-Extension, Skywork/SkyReels-V3-TalkingAvatar",
+    )
+
+    # ==================== Generation Parameters ====================
+    parser.add_argument(
+        "--duration",
+        type=int,
+        default=5,
+        help="Output video duration in seconds. "
+        "For single_shot_extension: 5-30s; for shot_switching_extension: max 5s; for reference_to_video: recommended 5s.",
     )
     parser.add_argument(
         "--prompt",
         type=str,
         default="A man is making his way forward slowly, leaning on a white cane to prop himself up.",
+        help="Text prompt describing the desired video content. For shot_switching_extension, use prefixes like [ZOOM_IN_CUT], [ZOOM_OUT_CUT], etc.",
     )
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--use_usp", action="store_true")
-    parser.add_argument("--offload", action="store_true")
+    parser.add_argument(
+        "--resolution",
+        type=str,
+        default="720P",
+        choices=["480P", "540P", "720P"],
+        help="Output video resolution. Lower resolution (540P/480P) recommended for low VRAM GPUs.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for reproducible generation. Required when using --use_usp mode.",
+    )
+
+    # ==================== Performance & Memory Options ====================
+    parser.add_argument(
+        "--use_usp",
+        action="store_true",
+        help="Enable multi-GPU parallel inference using xDiT USP (Unified Sequence Parallelism). "
+        "Use with torchrun --nproc_per_node=N. Cannot be used with --low_vram.",
+    )
+    parser.add_argument(
+        "--offload",
+        action="store_true",
+        help="Enable model offloading to reduce GPU memory usage.",
+    )
+    parser.add_argument(
+        "--low_vram",
+        action="store_true",
+        help="Enable low VRAM mode with FP8 weight-only quantization and block offload. "
+        "Recommended for GPUs with <24GB VRAM. Cannot be used with --use_usp.",
+    )
+
+    # ==================== Video Extension Parameters ====================
     parser.add_argument(
         "--input_video",
         type=str,
         default="https://skyreels-api.oss-accelerate.aliyuncs.com/examples/video_extension/test.mp4",
+        help="[single_shot_extension/shot_switching_extension] Input video path or URL to extend.",
     )
-    # audio2video parameters
+
+    # ==================== Reference to Video Parameters ====================
+    parser.add_argument(
+        "--ref_imgs",
+        type=str,
+        default="https://skyreels-api.oss-accelerate.aliyuncs.com/examples/subject_reference/0_0.png",
+        help="[reference_to_video] Reference images (1-4) for video generation. "
+        "Supports character portraits, objects, and backgrounds. "
+        "Multiple images should be comma-separated (e.g., 'img1.png,img2.png').",
+    )
+
+    # ==================== Talking Avatar Parameters ====================
     parser.add_argument(
         "--input_image",
         type=str,
         default="https://skyreels-api.oss-accelerate.aliyuncs.com/examples/talking_avatar_video/single1.png",
+        help="[talking_avatar] Portrait image path or URL for avatar generation. "
+        "Supports jpg/jpeg, png, gif, bmp formats. Works with real people, anime, animals, and stylized characters.",
     )
     parser.add_argument(
         "--input_audio",
         type=str,
         default="https://skyreels-api.oss-accelerate.aliyuncs.com/examples/talking_avatar_video/single_actor/huahai_5s.mp3",
+        help="[talking_avatar] Driving audio path or URL. Supports mp3, wav formats. "
+        "Audio duration must be <= 200 seconds. Supports multiple languages.",
     )
 
     args = parser.parse_args()
@@ -188,6 +251,7 @@ if __name__ == "__main__":
             ulysses_degree=dist.get_world_size(),
         )
     device = f"cuda:{local_rank}"
+    assert not(args.use_usp and args.low_vram), "usp mode and low_vram mode cannot be used together"
 
     # In multi-process inference, only rank0 downloads the model; other ranks receive the resolved path via broadcast.
     if dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1:
@@ -215,14 +279,14 @@ if __name__ == "__main__":
 
     # init pipeline
     if args.task_type == "single_shot_extension":
-        pipe = SingleShotExtensionPipeline(model_path=args.model_id, use_usp=args.use_usp, offload=args.offload)
-        video_out = pipe.extend_video(args.input_video, args.prompt, args.duration, args.seed)
+        pipe = SingleShotExtensionPipeline(model_path=args.model_id, use_usp=args.use_usp, offload=args.offload, low_vram=args.low_vram)
+        video_out = pipe.extend_video(args.input_video, args.prompt, args.duration, args.seed, resolution=args.resolution)
     elif args.task_type == "shot_switching_extension":
-        pipe = ShotSwitchingExtensionPipeline(model_path=args.model_id, use_usp=args.use_usp, offload=args.offload)
-        video_out = pipe.extend_video(args.input_video, args.prompt, args.duration, args.seed)
+        pipe = ShotSwitchingExtensionPipeline(model_path=args.model_id, use_usp=args.use_usp, offload=args.offload, low_vram=args.low_vram)
+        video_out = pipe.extend_video(args.input_video, args.prompt, args.duration, args.seed, resolution=args.resolution)
     elif args.task_type == "reference_to_video":
-        pipe = ReferenceToVideoPipeline(model_path=args.model_id, use_usp=args.use_usp, offload=args.offload)
-        video_out = pipe.generate_video(args.ref_imgs, args.prompt, args.duration, args.seed)
+        pipe = ReferenceToVideoPipeline(model_path=args.model_id, use_usp=args.use_usp, offload=args.offload, low_vram=args.low_vram)
+        video_out = pipe.generate_video(args.ref_imgs, args.prompt, args.duration, args.seed, resolution=args.resolution)
     elif args.task_type == "talking_avatar":
         config = WAN_CONFIGS["talking-avatar-19B"]
         pipe = TalkingAvatarPipeline(
@@ -232,6 +296,7 @@ if __name__ == "__main__":
             rank=local_rank,
             use_usp=args.use_usp,
             offload=args.offload,
+            low_vram=args.low_vram,
         )
         input_data = {
             "prompt": args.prompt,
@@ -251,7 +316,7 @@ if __name__ == "__main__":
             input_data, _ = preprocess_audio(args.model_id, input_data, "processed_audio")
         kwargs = {
             "input_data": input_data,
-            "size_buckget": "talking-avatar-720",
+            "size_buckget": args.resolution,
             "motion_frame": 5,
             "frame_num": 81,
             "drop_frame": 12,
